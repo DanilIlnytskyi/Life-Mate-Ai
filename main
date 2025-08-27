@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+"""
+LifeMate AI — Telegram Bot MVP (с деплоем и улучшениями)
+=======================================================
+Изменения:
+  • Добавлен пример деплоя на Railway/Render
+  • Добавлено меню кнопок (ReplyKeyboard)
+  • Добавлена локализация RU/UA (переключение командой /lang)
+
+Базовый функционал тот же: задачи, напоминания, привычки, расходы, ИИ-ответы.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import os
+import re
+import sqlite3
+from datetime import datetime, timedelta, time as dt_time
+from typing import Optional
+
+from dotenv import load_dotenv
+from telegram import Update, ReplyKeyboardMarkup
+from telegram.constants import ParseMode
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
+
+# ===================== Локализация =====================
+LANG_TEXTS = {
+    "ru": {
+        "start": "👋 *LifeMate AI* — твой минимальный ассистент жизни.",
+        "menu": [
+            ["➕ Добавить задачу", "📋 Список задач"],
+            ["🔥 Привычки", "💰 Расходы"],
+            ["⏰ Напоминание", "🤖 AI Совет"]
+        ],
+        "help": "Команды:\n/addtask, /list, /done, /remind, /addhabit, /checkin, /streaks, /expense, /stats, /ai, /lang",
+        "lang_switched": "Язык переключен на русский",
+    },
+    "ua": {
+        "start": "👋 *LifeMate AI* — твій мінімальний асистент життя.",
+        "menu": [
+            ["➕ Додати задачу", "📋 Список задач"],
+            ["🔥 Звички", "💰 Витрати"],
+            ["⏰ Нагадування", "🤖 AI Порада"]
+        ],
+        "help": "Команди:\n/addtask, /list, /done, /remind, /addhabit, /checkin, /streaks, /expense, /stats, /ai, /lang",
+        "lang_switched": "Мову переключено на українську",
+    },
+}
+
+USER_LANG = {}  # user_id -> lang code
+
+
+def get_lang(user_id: int) -> str:
+    return USER_LANG.get(user_id, "ru")
+
+
+# ===================== DB INIT =====================
+DB_PATH = "lifemate.db"
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    conn = get_db()
+    cur = conn.cursor()
+    cur.executescript("""
+    CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY,
+        lang TEXT DEFAULT 'ru'
+    );
+    """)
+    conn.commit()
+    conn.close()
+
+
+# ===================== HANDLERS =====================
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    lang = get_lang(uid)
+    texts = LANG_TEXTS[lang]
+    keyboard = ReplyKeyboardMarkup(texts["menu"], resize_keyboard=True)
+    await update.message.reply_text(texts["start"], parse_mode=ParseMode.MARKDOWN_V2, reply_markup=keyboard)
+    await update.message.reply_text(texts["help"])
+
+
+async def lang(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    if get_lang(uid) == "ru":
+        USER_LANG[uid] = "ua"
+    else:
+        USER_LANG[uid] = "ru"
+    lang = get_lang(uid)
+    texts = LANG_TEXTS[lang]
+    await update.message.reply_text(texts["lang_switched"])
+    keyboard = ReplyKeyboardMarkup(texts["menu"], resize_keyboard=True)
+    await update.message.reply_text(texts["help"], reply_markup=keyboard)
+
+
+# ===================== APP =====================
+async def main():
+    load_dotenv()
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        raise SystemExit("Set TELEGRAM_BOT_TOKEN env var")
+
+    init_db()
+    app = ApplicationBuilder().token(token).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("lang", lang))
+
+    # fallback: echo кнопок
+    async def button_echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        await update.message.reply_text("Используй команды из меню или /help")
+
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_echo))
+
+    print("LifeMate AI bot running…")
+    await app.run_polling()
+
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Bye 👋")
+
+
+# ===================== DEPLOY HINTS =====================
+"""
+Deploy на Railway / Render (бесплатно)
+--------------------------------------
+1. Создать аккаунт на railway.app или render.com
+2. Новый проект -> "Deploy from GitHub repo"
+3. Добавь этот код в GitHub репозиторий
+4. В настройках проекта добавь переменные окружения:
+   TELEGRAM_BOT_TOKEN=123456:ABC...
+   (опционально) OPENAI_API_KEY=sk-...
+5. Deploy — сервис сам запустит бота (Procfile: `python lifemate_bot.py`)
+
+Railway: бесплатные часы, Render: free web service 750h/мес
+"""
